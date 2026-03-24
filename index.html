@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TJ Tracker">
+<meta name="theme-color" content="#00d9ff">
+<title>Triple Jump Tracker</title>
+<link rel="manifest" href="manifest.json">
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&display=swap');
+
+:root {
+  --bg:     #080b10;
+  --panel:  #0d1117;
+  --border: #1a2030;
+  --hop:    #ff6b35;
+  --step:   #00d9ff;
+  --jump:   #a8ff3e;
+  --warn:   #ffd700;
+  --danger: #ff3d71;
+  --text:   #dde3ee;
+  --muted:  #3d4f6b;
+  --track:  #1e2a3a;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bot: env(safe-area-inset-bottom, 0px);
+}
+
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Space Mono', monospace;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  touch-action: none;
+}
+
+/* ── SCREENS ── */
+.screen { position:fixed; inset:0; display:none; flex-direction:column; background:var(--bg); }
+.screen.active { display:flex; }
+
+/* ════════════════════════════════
+   SPLASH
+════════════════════════════════ */
+#screen-splash {
+  align-items:center; justify-content:center; gap:20px;
+  background: radial-gradient(ellipse at 40% 40%, #0d1f35 0%, var(--bg) 70%);
+}
+.splash-logo {
+  font-family:'Bebas Neue',sans-serif;
+  font-size: clamp(2.5rem, 12vw, 4rem);
+  letter-spacing:0.18em; text-align:center; line-height:1.1;
+}
+.splash-logo .hop  { color:var(--hop); }
+.splash-logo .step { color:var(--step); }
+.splash-logo .jump { color:var(--jump); }
+.splash-sub {
+  font-size:0.7rem; color:var(--muted);
+  letter-spacing:0.1em; text-align:center; line-height:1.8;
+}
+.splash-btn {
+  font-family:'Bebas Neue',sans-serif;
+  font-size:1.2rem; letter-spacing:0.15em;
+  padding:14px 48px;
+  border:1px solid var(--step); background:transparent; color:var(--step);
+  border-radius:3px; cursor:pointer; transition:all 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+.splash-btn:active { background:var(--step); color:var(--bg); }
+
+/* ════════════════════════════════
+   TRACKER
+════════════════════════════════ */
+#screen-tracker { flex-direction:column; }
+
+/* Top bar */
+.topbar {
+  display:flex; align-items:center; gap:8px;
+  padding: calc(var(--safe-top) + 6px) 12px 6px;
+  background:var(--panel);
+  border-bottom:1px solid var(--border);
+  flex-shrink:0; flex-wrap:wrap;
+  min-height:48px;
+}
+
+.logo-small {
+  font-family:'Bebas Neue',sans-serif;
+  font-size:1.1rem; letter-spacing:0.15em; white-space:nowrap;
+}
+.logo-small .hop  { color:var(--hop); }
+.logo-small .step { color:var(--step); }
+.logo-small .jump { color:var(--jump); }
+
+.phase-pills { display:flex; gap:4px; }
+.pill {
+  font-family:'Bebas Neue',sans-serif;
+  font-size:0.72rem; letter-spacing:0.1em;
+  padding:2px 9px; border-radius:2px;
+  border:1px solid transparent; opacity:0.28;
+  transition:opacity 0.2s, box-shadow 0.2s;
+}
+.pill.hop  { border-color:var(--hop);  color:var(--hop); }
+.pill.step { border-color:var(--step); color:var(--step); }
+.pill.jump { border-color:var(--jump); color:var(--jump); }
+.pill.active { opacity:1; box-shadow:0 0 8px currentColor; }
+
+.topbar-right { display:flex; gap:6px; margin-left:auto; align-items:center; }
+
+.live-dot {
+  width:7px; height:7px; border-radius:50%;
+  background:var(--muted); flex-shrink:0;
+  transition:background 0.3s, box-shadow 0.3s;
+}
+.live-dot.on  { background:var(--jump); box-shadow:0 0 8px var(--jump); }
+.live-dot.err { background:var(--danger); }
+
+#fps-display { font-size:0.55rem; color:var(--muted); }
+
+.icon-btn {
+  width:36px; height:36px; border-radius:6px;
+  border:1px solid var(--border); background:transparent;
+  color:var(--text); font-size:1rem; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  transition:all 0.15s; flex-shrink:0;
+}
+.icon-btn:active { background:var(--step); border-color:var(--step); color:var(--bg); }
+.icon-btn.on { background:var(--step); border-color:var(--step); color:var(--bg); }
+.icon-btn.rec { background:var(--danger); border-color:var(--danger); color:#fff; animation:pulse-rec 1s infinite; }
+
+@keyframes pulse-rec {
+  0%,100% { box-shadow:0 0 0 0 rgba(255,61,113,0.4); }
+  50%      { box-shadow:0 0 0 6px rgba(255,61,113,0); }
+}
+
+/* Canvas area */
+.canvas-wrap {
+  flex:1; position:relative; overflow:hidden; background:#000;
+  min-height:0;
+}
+video { position:absolute; opacity:0; pointer-events:none; width:1px; height:1px; }
+#cvs  { width:100%; height:100%; display:block; }
+
+/* Overlay start */
+.overlay-start {
+  position:absolute; inset:0;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:16px;
+  background:rgba(8,11,16,0.92);
+  padding:24px;
+}
+.overlay-start h2 {
+  font-family:'Bebas Neue',sans-serif;
+  font-size:clamp(1.8rem,8vw,2.5rem);
+  letter-spacing:0.15em; text-align:center;
+}
+.overlay-start p { font-size:0.68rem; color:var(--muted); text-align:center; line-height:1.7; }
+.big-btn {
+  font-family:'Bebas Neue',sans-serif;
+  font-size:1.1rem; letter-spacing:0.15em;
+  padding:14px 40px;
+  border:1px solid var(--step); background:transparent; color:var(--step);
+  border-radius:3px; cursor:pointer; transition:all 0.2s; width:100%; max-width:280px;
+}
+.big-btn:active { background:var(--step); color:var(--bg); }
+
+/* Bottom drawer */
+.drawer {
+  background:var(--panel);
+  border-top:1px solid var(--border);
+  flex-shrink:0;
+  padding-bottom: var(--safe-bot);
+}
+
+.drawer-tabs {
+  display:flex; border-bottom:1px solid var(--border);
+}
+.dtab {
+  flex:1; font-family:'Bebas Neue',sans-serif;
+  font-size:0.72rem; letter-spacing:0.1em;
+  padding:8px 4px; border:none; background:transparent;
+  color:var(--muted); cursor:pointer;
+  border-bottom:2px solid transparent; transition:all 0.15s;
+}
+.dtab.active { color:var(--step); border-bottom-color:var(--step); }
+
+.drawer-body {
+  max-height: 38vh;
+  overflow-y:auto;
+  padding:10px 12px;
+}
+
+/* Angles grid */
+.angles-grid {
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:4px 12px;
+}
+.ag-row {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:3px 0; border-bottom:1px solid rgba(255,255,255,0.04);
+  font-size:0.58rem; letter-spacing:0.03em; text-transform:uppercase;
+}
+.ag-name { display:flex; align-items:center; gap:5px; color:var(--text); }
+.ag-dot  { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+.ag-val  { font-weight:700; font-size:0.62rem; }
+
+/* KPI cards horizontal scroll */
+.kpi-scroll {
+  display:flex; gap:10px; overflow-x:auto; padding:4px 0 8px;
+  scrollbar-width:none;
+}
+.kpi-scroll::-webkit-scrollbar { display:none; }
+.kpi-card {
+  background:var(--track); border:1px solid var(--border);
+  border-radius:4px; padding:10px 12px; flex-shrink:0; min-width:130px;
+}
+.kpi-label { font-size:0.52rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); margin-bottom:4px; }
+.kpi-val   { font-family:'Bebas Neue',sans-serif; font-size:1.5rem; letter-spacing:0.06em; line-height:1; }
+.kpi-sub   { font-size:0.5rem; color:var(--muted); margin-top:3px; }
+.bar-wrap  { height:3px; background:var(--border); border-radius:2px; margin-top:6px; overflow:hidden; }
+.bar-fill  { height:100%; border-radius:2px; transition:width 0.3s; }
+
+/* Settings */
+.set-section { font-family:'Bebas Neue',sans-serif; font-size:0.7rem; letter-spacing:0.1em; color:var(--muted); margin:8px 0 6px; }
+.set-row {
+  display:flex; align-items:center; justify-content:space-between;
+  font-size:0.6rem; text-transform:uppercase; letter-spacing:0.05em;
+  color:var(--text); margin-bottom:10px;
+}
+input[type=range] {
+  -webkit-appearance:none; width:100px; height:3px;
+  background:var(--border); border-radius:2px; outline:none;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance:none; width:14px; height:14px;
+  border-radius:50%; background:var(--step); cursor:pointer;
+}
+.tog {
+  width:34px; height:18px; border-radius:9px;
+  background:var(--border); position:relative;
+  cursor:pointer; border:none; transition:background 0.2s; flex-shrink:0;
+}
+.tog.on { background:var(--step); }
+.tog::after {
+  content:''; position:absolute; top:2px; left:2px;
+  width:14px; height:14px; border-radius:50%;
+  background:#fff; transition:transform 0.2s;
+}
+.tog.on::after { transform:translateX(16px); }
+
+/* ════════════════════════════════
+   SESSIONS SCREEN
+════════════════════════════════ */
+#screen-sessions { flex-direction:column; }
+
+.screen-header {
+  display:flex; align-items:center; gap:12px;
+  padding: calc(var(--safe-top)+8px) 16px 8px;
+  background:var(--panel); border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+.screen-header h2 { font-family:'Bebas Neue',sans-serif; font-size:1.2rem; letter-spacing:0.12em; }
+.back-btn {
+  font-family:'Bebas Neue',sans-serif; font-size:0.8rem; letter-spacing:0.1em;
+  padding:6px 12px; border:1px solid var(--border); background:transparent;
+  color:var(--text); border-radius:2px; cursor:pointer;
+}
+.back-btn:active { background:var(--step); color:var(--bg); border-color:var(--step); }
+
+.sessions-body { flex:1; overflow-y:auto; padding:12px; }
+
+.empty-state {
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  height:100%; gap:12px; color:var(--muted); text-align:center; padding:40px;
+}
+.empty-state .big-icon { font-size:3rem; opacity:0.3; }
+.empty-state p { font-size:0.7rem; line-height:1.7; letter-spacing:0.04em; }
+
+.session-card {
+  background:var(--panel); border:1px solid var(--border);
+  border-radius:4px; margin-bottom:10px; overflow:hidden;
+}
+.session-head {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:10px 12px; cursor:pointer;
+}
+.session-head h3 { font-family:'Bebas Neue',sans-serif; font-size:1rem; letter-spacing:0.08em; }
+.session-meta { font-size:0.58rem; color:var(--muted); margin-top:2px; }
+.session-actions { display:flex; gap:6px; }
+.sm-btn {
+  font-family:'Space Mono',monospace; font-size:0.55rem; letter-spacing:0.06em;
+  text-transform:uppercase; padding:4px 8px;
+  border:1px solid var(--border); background:transparent; color:var(--text);
+  border-radius:2px; cursor:pointer; transition:all 0.15s;
+}
+.sm-btn:active { background:var(--step); color:var(--bg); border-color:var(--step); }
+.sm-btn.del:active { background:var(--danger); border-color:var(--danger); }
+
+.session-detail {
+  border-top:1px solid var(--border); padding:12px;
+  display:none;
+}
+.session-detail.open { display:block; }
+
+.replay-canvas-wrap {
+  width:100%; aspect-ratio:16/9; background:#000;
+  border-radius:3px; overflow:hidden; margin-bottom:10px; position:relative;
+}
+.replay-canvas-wrap canvas { width:100%; height:100%; }
+
+.notes-area {
+  width:100%; background:var(--track); border:1px solid var(--border);
+  color:var(--text); font-family:'Space Mono',monospace; font-size:0.65rem;
+  padding:8px; border-radius:3px; resize:vertical; min-height:80px;
+  line-height:1.6; letter-spacing:0.03em;
+}
+.notes-area:focus { outline:none; border-color:var(--step); }
+.notes-label { font-size:0.58rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px; }
+.save-note-btn {
+  margin-top:6px; width:100%;
+  font-family:'Bebas Neue',sans-serif; font-size:0.85rem; letter-spacing:0.1em;
+  padding:8px; border:1px solid var(--step); background:transparent; color:var(--step);
+  border-radius:2px; cursor:pointer;
+}
+.save-note-btn:active { background:var(--step); color:var(--bg); }
+
+.phase-badge {
+  display:inline-block; font-family:'Bebas Neue',sans-serif;
+  font-size:0.65rem; letter-spacing:0.1em; padding:1px 6px; border-radius:2px; margin-right:4px;
+}
+
+/* replay controls */
+.replay-controls {
+  display:flex; gap:8px; align-items:center; margin-bottom:10px;
+}
+.replay-controls button {
+  font-family:'Bebas Neue',sans-serif; font-size:0.75rem; letter-spacing:0.1em;
+  padding:6px 12px; border:1px solid var(--border); background:transparent;
+  color:var(--text); border-radius:2px; cursor:pointer;
+}
+.replay-controls button:active { background:var(--step); color:var(--bg); border-color:var(--step); }
+.replay-scrub { flex:1; }
+
+/* Toast */
+.toast {
+  position:fixed; bottom:calc(var(--safe-bot) + 80px); left:50%; transform:translateX(-50%) translateY(20px);
+  background:var(--panel); border:1px solid var(--step); color:var(--step);
+  font-family:'Bebas Neue',sans-serif; font-size:0.9rem; letter-spacing:0.1em;
+  padding:10px 24px; border-radius:3px; opacity:0;
+  transition:opacity 0.3s, transform 0.3s; pointer-events:none; z-index:999;
+  white-space:nowrap;
+}
+.toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+::-webkit-scrollbar { width:3px; height:3px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+</style>
+</head>
+<body>
+
+<!-- ══ SPLASH ══════════════════════════════════════════ -->
+<div class="screen active" id="screen-splash">
+  <div class="splash-logo">
+    <span class="hop">HOP</span><br>
+    <span class="step">STEP</span><br>
+    <span class="jump">JUMP</span>
+  </div>
+  <div class="splash-sub">Triple Jump Biomechanics Tracker<br>Phase detection · Angle analysis · Session logs</div>
+  <button class="splash-btn" id="splash-start">Start Tracking</button>
+  <button class="splash-btn" style="border-color:var(--muted);color:var(--muted);margin-top:-8px;" id="splash-sessions">View Sessions</button>
+</div>
+
+<!-- ══ TRACKER ══════════════════════════════════════════ -->
+<div class="screen" id="screen-tracker">
+
+  <div class="topbar">
+    <div class="logo-small"><span class="hop">H</span>·<span class="step">S</span>·<span class="jump">J</span></div>
+    <div class="phase-pills">
+      <div class="pill hop"  id="pill-hop">HOP</div>
+      <div class="pill step" id="pill-step">STEP</div>
+      <div class="pill jump" id="pill-jump">JUMP</div>
+    </div>
+    <div class="topbar-right">
+      <span id="fps-display"></span>
+      <div class="live-dot" id="ldot"></div>
+      <button class="icon-btn" id="btn-flip"    title="Flip camera">🔄</button>
+      <button class="icon-btn on" id="btn-mirror" title="Mirror">↔</button>
+      <button class="icon-btn" id="btn-rec"     title="Record session">⏺</button>
+      <button class="icon-btn" id="btn-reset"   title="Reset phase">↺</button>
+      <button class="icon-btn" id="btn-sessions" title="Sessions">📋</button>
+    </div>
+  </div>
+
+  <div class="canvas-wrap">
+    <video id="vid" playsinline autoplay muted></video>
+    <canvas id="cvs"></canvas>
+    <div class="overlay-start" id="overlay">
+      <h2><span class="hop">HOP</span> · <span class="step">STEP</span> · <span class="jump">JUMP</span></h2>
+      <p>Triple Jump Biomechanics Tracker<br>Tap below to start your camera</p>
+      <button class="big-btn" id="btn-start">Start Camera</button>
+    </div>
+  </div>
+
+  <div class="drawer">
+    <div class="drawer-tabs">
+      <button class="dtab active" data-tab="angles">Angles</button>
+      <button class="dtab"        data-tab="metrics">Metrics</button>
+      <button class="dtab"        data-tab="settings">Settings</button>
+    </div>
+
+    <!-- ANGLES -->
+    <div class="drawer-body" id="tab-angles">
+      <div class="angles-grid" id="angles-grid"></div>
+    </div>
+
+    <!-- METRICS -->
+    <div class="drawer-body" id="tab-metrics" style="display:none">
+      <div class="kpi-scroll">
+        <div class="kpi-card">
+          <div class="kpi-label">Takeoff Hip</div>
+          <div class="kpi-val" id="kpi-takeoff" style="color:var(--hop)">—</div>
+          <div class="kpi-sub">Target 155–170°</div>
+          <div class="bar-wrap"><div class="bar-fill" id="bar-takeoff" style="background:var(--hop);width:0%"></div></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Knee Drive</div>
+          <div class="kpi-val" id="kpi-knee" style="color:var(--step)">—</div>
+          <div class="kpi-sub">Tighter = more drive</div>
+          <div class="bar-wrap"><div class="bar-fill" id="bar-knee" style="background:var(--step);width:0%"></div></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Trunk Lean</div>
+          <div class="kpi-val" id="kpi-lean" style="color:var(--warn)">—</div>
+          <div class="kpi-sub">Target 5–15° fwd</div>
+          <div class="bar-wrap"><div class="bar-fill" id="bar-lean" style="background:var(--warn);width:0%"></div></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Arm Symmetry</div>
+          <div class="kpi-val" id="kpi-arm" style="color:var(--jump)">—</div>
+          <div class="kpi-sub">Δ elbow L vs R</div>
+          <div class="bar-wrap"><div class="bar-fill" id="bar-arm" style="background:var(--jump);width:0%"></div></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Hip–Sho Offset</div>
+          <div class="kpi-val" id="kpi-align" style="color:var(--step)">—</div>
+          <div class="kpi-sub">Rotation alignment</div>
+          <div class="bar-wrap"><div class="bar-fill" id="bar-align" style="background:var(--step);width:0%"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="drawer-body" id="tab-settings" style="display:none">
+      <div class="set-section">Trails</div>
+      <div class="set-row"><span>Trail Length</span><input type="range" id="sl-len"   min="20" max="300" value="120"></div>
+      <div class="set-row"><span>Trail Opacity</span><input type="range" id="sl-op"   min="10" max="100" value="75"></div>
+      <div class="set-row"><span>Trail Width</span>  <input type="range" id="sl-w"    min="1"  max="8"   value="3"></div>
+      <div class="set-section">Display</div>
+      <div class="set-row"><span>Point Size</span>   <input type="range" id="sl-pt"   min="3"  max="18"  value="8"></div>
+      <div class="set-row"><span>Skeleton</span>     <button class="tog on" id="tog-skel"></button></div>
+      <div class="set-row"><span>Angle Labels</span> <button class="tog on" id="tog-labels"></button></div>
+      <div class="set-row"><span>Phase Colours</span><button class="tog on" id="tog-phase"></button></div>
+      <div class="set-row"><span>Video Feed</span>   <button class="tog on" id="tog-video"></button></div>
+      <div class="set-section">Phase Detection</div>
+      <div class="set-row"><span>Sensitivity</span> <input type="range" id="sl-phase" min="1" max="10" value="5"></div>
+      <div class="set-row"><span>Auto-clear on Land</span><button class="tog" id="tog-autoclear"></button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SESSIONS ══════════════════════════════════════════ -->
+<div class="screen" id="screen-sessions">
+  <div class="screen-header">
+    <button class="back-btn" id="sessions-back">&#8592; Back</button>
+    <h2>Sessions</h2>
+    <button class="sm-btn" id="btn-clear-all" style="margin-left:auto">Clear All</button>
+  </div>
+  <div class="sessions-body" id="sessions-body">
+    <div class="empty-state" id="empty-state">
+      <div class="big-icon">📹</div>
+      <p>No sessions recorded yet.<br>Hit the ⏺ button while tracking<br>to save a session.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+window.addEventListener('load', function () {
+
+// ══════════════════════════════════════════════
+//  SERVICE WORKER
+// ══════════════════════════════════════════════
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(function(){});
+}
+
+// ══════════════════════════════════════════════
+//  WAKE LOCK
+// ══════════════════════════════════════════════
+var wakeLock = null;
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+  } catch(e) {}
+}
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'visible') requestWakeLock();
+});
+
+// ══════════════════════════════════════════════
+//  SCREEN NAV
+// ══════════════════════════════════════════════
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(function(s){ s.classList.remove('active'); });
+  document.getElementById(id).classList.add('active');
+}
+document.getElementById('splash-start').addEventListener('click', function(){ showScreen('screen-tracker'); });
+document.getElementById('splash-sessions').addEventListener('click', function(){ showScreen('screen-sessions'); renderSessions(); });
+document.getElementById('sessions-back').addEventListener('click', function(){ showScreen('screen-tracker'); });
+document.getElementById('btn-sessions').addEventListener('click', function(){ showScreen('screen-sessions'); renderSessions(); });
+
+// ══════════════════════════════════════════════
+//  TOAST
+// ══════════════════════════════════════════════
+function toast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(function(){ t.classList.remove('show'); }, 2200);
+}
+
+// ══════════════════════════════════════════════
+//  JOINTS
+// ══════════════════════════════════════════════
+var JOINTS = {
+  'L. Hip':      { idx:23, color:'#ff9f43', angle:[11,23,25], pri:1 },
+  'R. Hip':      { idx:24, color:'#ff9f43', angle:[12,24,26], pri:1 },
+  'L. Knee':     { idx:25, color:'#ff6b35', angle:[23,25,27], pri:1 },
+  'R. Knee':     { idx:26, color:'#00d9ff', angle:[24,26,28], pri:1 },
+  'L. Ankle':    { idx:27, color:'#ff6b35', angle:[25,27,31], pri:1 },
+  'R. Ankle':    { idx:28, color:'#00d9ff', angle:[26,28,32], pri:1 },
+  'L. Toe':      { idx:31, color:'#ff6b35', angle:[27,31,29], pri:2 },
+  'R. Toe':      { idx:32, color:'#00d9ff', angle:[28,32,30], pri:2 },
+  'L. Shoulder': { idx:11, color:'#c44dff', angle:[23,11,13], pri:2 },
+  'R. Shoulder': { idx:12, color:'#c44dff', angle:[24,12,14], pri:2 },
+  'L. Elbow':    { idx:13, color:'#ffd700', angle:[11,13,15], pri:1 },
+  'R. Elbow':    { idx:14, color:'#ffd700', angle:[12,14,16], pri:1 },
+  'L. Wrist':    { idx:15, color:'#a8ff3e', angle:[13,15,17], pri:3 },
+  'R. Wrist':    { idx:16, color:'#a8ff3e', angle:[14,16,18], pri:3 },
+  'Head':        { idx:0,  color:'#ff3d71', angle:[11,0,12],  pri:2 }
+};
+var TRAIL_JOINTS = ['L. Knee','R. Knee','L. Ankle','R. Ankle',
+                    'L. Toe','R. Toe','L. Elbow','R. Elbow','L. Hip','R. Hip'];
+var phaseColors = { hop:'#ff6b35', step:'#00d9ff', jump:'#a8ff3e' };
+var LEG_IDX = new Set([23,24,25,26,27,28,29,30,31,32]);
+
+// ══════════════════════════════════════════════
+//  BUILD ANGLES GRID
+// ══════════════════════════════════════════════
+var grid = document.getElementById('angles-grid');
+Object.keys(JOINTS).forEach(function(name) {
+  var cfg = JOINTS[name];
+  var d = document.createElement('div');
+  d.className = 'ag-row';
+  var sid = 'mv_' + name.replace(/[^a-zA-Z0-9]/g,'_');
+  d.innerHTML =
+    '<div class="ag-name"><div class="ag-dot" style="background:'+cfg.color+'"></div>'+name+'</div>'+
+    '<div class="ag-val" id="'+sid+'" style="color:'+cfg.color+'">—</div>';
+  grid.appendChild(d);
+});
+function setMv(name,val){
+  var el=document.getElementById('mv_'+name.replace(/[^a-zA-Z0-9]/g,'_'));
+  if(el) el.textContent=val;
+}
+
+// ══════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════
+var trails = {}; TRAIL_JOINTS.forEach(function(n){ trails[n]=[]; });
+var trailLen=120,trailOp=0.75,trailW=3,ptSize=8;
+var showSkel=true,showLabels=true,showPhase=true,showVideo=true,autoClear=false,phaseSnstvty=5;
+var mirrored=true, running=false, facingMode='environment';
+var currentPhase=null, phaseCount=0, airborneFrames=0;
+var smoothAngles={};
+var fpsTs=performance.now(), fpsFrames=0;
+
+// Recording state
+var isRecording=false;
+var recordingFrames=[];   // array of {landmarks, phase, ts}
+var recordingStart=0;
+
+// Sessions stored in localStorage
+function loadSessions(){ try{ return JSON.parse(localStorage.getItem('tj_sessions')||'[]'); } catch(e){ return []; } }
+function saveSessions(s){ try{ localStorage.setItem('tj_sessions', JSON.stringify(s)); } catch(e){} }
+
+// ══════════════════════════════════════════════
+//  CONTROLS
+// ══════════════════════════════════════════════
+document.querySelectorAll('.dtab').forEach(function(btn){
+  btn.addEventListener('click', function(){
+    document.querySelectorAll('.dtab').forEach(function(b){ b.classList.remove('active'); });
+    btn.classList.add('active');
+    ['angles','metrics','settings'].forEach(function(t){
+      document.getElementById('tab-'+t).style.display = (t===btn.dataset.tab)?'':'none';
+    });
+  });
+});
+
+document.getElementById('btn-mirror').addEventListener('click', function(){
+  mirrored=!mirrored; this.classList.toggle('on',mirrored);
+});
+document.getElementById('btn-reset').addEventListener('click', function(){
+  phaseCount=0; currentPhase=null; airborneFrames=0;
+  ['hop','step','jump'].forEach(function(p){ document.getElementById('pill-'+p).classList.remove('active'); });
+  TRAIL_JOINTS.forEach(function(n){ trails[n]=[]; });
+  toast('Phase reset');
+});
+document.getElementById('btn-flip').addEventListener('click', function(){
+  facingMode = facingMode==='environment' ? 'user' : 'environment';
+  if(running) restartCamera();
+  toast(facingMode==='environment' ? 'Rear camera' : 'Front camera');
+});
+
+// Recording
+document.getElementById('btn-rec').addEventListener('click', function(){
+  if(!running){ toast('Start camera first'); return; }
+  if(!isRecording){
+    isRecording=true; recordingFrames=[]; recordingStart=Date.now();
+    this.classList.add('rec'); this.textContent='⏹';
+    toast('Recording…');
+  } else {
+    isRecording=false; this.classList.remove('rec'); this.textContent='⏺';
+    saveSession();
+  }
+});
+
+function saveSession(){
+  if(recordingFrames.length < 5){ toast('Too short to save'); return; }
+  var sessions = loadSessions();
+  var session = {
+    id: Date.now(),
+    date: new Date().toLocaleString(),
+    duration: ((recordingFrames[recordingFrames.length-1].ts - recordingFrames[0].ts)/1000).toFixed(1),
+    frames: recordingFrames.slice(),
+    phases: detectSessionPhases(),
+    notes: ''
+  };
+  sessions.unshift(session);
+  // Keep max 20 sessions
+  if(sessions.length > 20) sessions = sessions.slice(0,20);
+  saveSessions(sessions);
+  toast('Session saved (' + session.duration + 's)');
+}
+
+function detectSessionPhases(){
+  var phases = {};
+  recordingFrames.forEach(function(f){ if(f.phase) phases[f.phase]=true; });
+  return Object.keys(phases);
+}
+
+// Settings sliders
+document.getElementById('sl-len').addEventListener('input',   function(e){ trailLen=+e.target.value; });
+document.getElementById('sl-op').addEventListener('input',    function(e){ trailOp=e.target.value/100; });
+document.getElementById('sl-w').addEventListener('input',     function(e){ trailW=+e.target.value; });
+document.getElementById('sl-pt').addEventListener('input',    function(e){ ptSize=+e.target.value; });
+document.getElementById('sl-phase').addEventListener('input', function(e){ phaseSnstvty=+e.target.value; });
+
+function bindTog(id,get,set){
+  document.getElementById(id).addEventListener('click',function(){
+    set(!get()); this.classList.toggle('on',get());
+  });
+}
+bindTog('tog-skel',      function(){ return showSkel;   }, function(v){ showSkel=v;   });
+bindTog('tog-labels',    function(){ return showLabels; }, function(v){ showLabels=v; });
+bindTog('tog-phase',     function(){ return showPhase;  }, function(v){ showPhase=v;  });
+bindTog('tog-video',     function(){ return showVideo;  }, function(v){ showVideo=v;  });
+bindTog('tog-autoclear', function(){ return autoClear;  }, function(v){ autoClear=v;  });
+
+// ══════════════════════════════════════════════
+//  MATH
+// ══════════════════════════════════════════════
+function angleBetween(a,b,c){
+  var bax=a.x-b.x,bay=a.y-b.y,bcx=c.x-b.x,bcy=c.y-b.y;
+  var dot=bax*bcx+bay*bcy;
+  var mag=Math.hypot(bax,bay)*Math.hypot(bcx,bcy);
+  if(mag===0) return null;
+  return Math.round(Math.acos(Math.max(-1,Math.min(1,dot/mag)))*180/Math.PI);
+}
+function lmXY(lm,W,H){
+  return { x: mirrored ? W-lm.x*W : lm.x*W, y: lm.y*H };
+}
+function smooth(key,val){
+  smoothAngles[key]=(smoothAngles[key]==null)?val:smoothAngles[key]*0.65+val*0.35;
+  return Math.round(smoothAngles[key]);
+}
+
+// ══════════════════════════════════════════════
+//  PHASE DETECTION
+// ══════════════════════════════════════════════
+function detectPhase(lm){
+  if(!lm) return;
+  var la=lm[27],ra=lm[28],lh=lm[23],rh=lm[24];
+  if(!la||!ra||!lh||!rh) return;
+  var gap=(la.y+ra.y)/2 - (lh.y+rh.y)/2;
+  var threshold=0.35-(phaseSnstvty*0.015);
+  if(gap<threshold){
+    airborneFrames++;
+  } else {
+    if(airborneFrames>=Math.max(2,8-phaseSnstvty)){
+      phaseCount=Math.min(phaseCount+1,3);
+      if(autoClear) TRAIL_JOINTS.forEach(function(n){ trails[n]=[]; });
+    }
+    airborneFrames=0;
+  }
+  var names=[null,'hop','step','jump'];
+  var next=names[phaseCount]||null;
+  if(next!==currentPhase){
+    currentPhase=next;
+    ['hop','step','jump'].forEach(function(p){
+      document.getElementById('pill-'+p).classList.toggle('active',p===currentPhase);
+    });
+  }
+}
+
+// ══════════════════════════════════════════════
+//  CANVAS
+// ══════════════════════════════════════════════
+var cvs = document.getElementById('cvs');
+var ctx = cvs.getContext('2d');
+function resize(){ cvs.width=cvs.offsetWidth; cvs.height=cvs.offsetHeight; }
+new ResizeObserver(resize).observe(cvs);
+resize();
+
+// ══════════════════════════════════════════════
+//  DRAW
+// ══════════════════════════════════════════════
+function drawFrame(lm, canvas, context, mirrorOverride) {
+  var useMirror = mirrorOverride !== undefined ? mirrorOverride : mirrored;
+  var W=canvas.width, H=canvas.height;
+  context.clearRect(0,0,W,H);
+
+  context.save();
+  if(useMirror){ context.translate(W,0); context.scale(-1,1); }
+  if(showVideo) context.drawImage(vid,0,0,W,H);
+  context.restore();
+
+  context.fillStyle=showVideo?'rgba(8,11,16,0.42)':'rgba(8,11,16,0.96)';
+  context.fillRect(0,0,W,H);
+
+  if(!lm) return;
+
+  function xy(p){ return { x: useMirror?W-p.x*W:p.x*W, y:p.y*H }; }
+
+  // Skeleton
+  if(showSkel){
+    var legCol=currentPhase?phaseColors[currentPhase]+'88':'rgba(255,255,255,0.3)';
+    var conns=window.POSE_CONNECTIONS||[];
+    conns.forEach(function(pair){
+      var a=pair[0],b=pair[1],la=lm[a],lb=lm[b];
+      if(!la||!lb||la.visibility<0.25||lb.visibility<0.25) return;
+      var pa=xy(la),pb=xy(lb);
+      var isLeg=LEG_IDX.has(a)||LEG_IDX.has(b);
+      context.strokeStyle=isLeg?legCol:'rgba(255,255,255,0.12)';
+      context.lineWidth=isLeg?2:1;
+      context.beginPath(); context.moveTo(pa.x,pa.y); context.lineTo(pb.x,pb.y); context.stroke();
+    });
+  }
+
+  // Trails (only on main canvas)
+  if(canvas===cvs){
+    TRAIL_JOINTS.forEach(function(name){
+      var cfg=JOINTS[name],p=lm[cfg.idx];
+      if(!p||p.visibility<0.28) return;
+      var pos=xy(p);
+      trails[name].push({x:pos.x,y:pos.y,phase:currentPhase});
+      if(trails[name].length>trailLen) trails[name].shift();
+    });
+  }
+
+  // Draw trails
+  TRAIL_JOINTS.forEach(function(name){
+    var trail=canvas===cvs?trails[name]:[];
+    if(trail.length<2) return;
+    var cfg=JOINTS[name];
+    for(var i=1;i<trail.length;i++){
+      var t=i/trail.length;
+      var col=cfg.color;
+      if(showPhase&&trail[i].phase) col=phaseColors[trail[i].phase]||col;
+      context.strokeStyle=col+Math.round(t*trailOp*255).toString(16).padStart(2,'0');
+      context.lineWidth=t*trailW+0.3;
+      context.lineCap='round';
+      context.beginPath();
+      context.moveTo(trail[i-1].x,trail[i-1].y);
+      context.lineTo(trail[i].x,trail[i].y);
+      context.stroke();
+    }
+  });
+
+  // Angles
+  Object.keys(JOINTS).forEach(function(name){
+    var cfg=JOINTS[name],p=lm[cfg.idx];
+    if(!p||p.visibility<0.25){ if(canvas===cvs) setMv(name,'—'); return; }
+    var ai=cfg.angle[0],bi=cfg.angle[1],ci=cfg.angle[2];
+    if(!lm[ai]||!lm[ci]||lm[ai].visibility<0.2||lm[ci].visibility<0.2) return;
+    var pa=lm[ai],pb=lm[bi],pc=lm[ci];
+    if(useMirror){ pa={x:1-pa.x,y:pa.y}; pb={x:1-pb.x,y:pb.y}; pc={x:1-pc.x,y:pc.y}; }
+    var raw=angleBetween(pa,pb,pc);
+    if(raw==null) return;
+    var ang=(canvas===cvs)?smooth(name,raw):raw;
+    if(canvas===cvs) setMv(name,ang+'°');
+
+    // Joint dot
+    var pos=xy(p);
+    var col=cfg.color;
+    if(showPhase&&currentPhase&&(name.includes('Knee')||name.includes('Ankle')||name.includes('Hip')))
+      col=phaseColors[currentPhase];
+    var ps=cfg.pri===1?ptSize:cfg.pri===2?ptSize*0.72:ptSize*0.5;
+    var gr=context.createRadialGradient(pos.x,pos.y,0,pos.x,pos.y,ps*3);
+    gr.addColorStop(0,col+'55'); gr.addColorStop(1,col+'00');
+    context.beginPath(); context.arc(pos.x,pos.y,ps*3,0,Math.PI*2);
+    context.fillStyle=gr; context.fill();
+    context.beginPath(); context.arc(pos.x,pos.y,ps,0,Math.PI*2);
+    context.fillStyle=col; context.fill();
+    context.strokeStyle='rgba(255,255,255,0.4)'; context.lineWidth=1; context.stroke();
+
+    if(showLabels){
+      var fs=Math.max(10,Math.round(ps*1.6));
+      context.save();
+      context.font='700 '+fs+'px Space Mono,monospace';
+      context.fillStyle=col; context.shadowColor='#000'; context.shadowBlur=5;
+      context.fillText(ang+'°',pos.x+ps+3,pos.y-ps+3);
+      context.restore();
+    }
+  });
+
+  // KPIs (main canvas only)
+  if(canvas===cvs){
+    var lK=smoothAngles['L. Knee'],rK=smoothAngles['R. Knee'];
+    var lE=smoothAngles['L. Elbow'],rE=smoothAngles['R. Elbow'];
+    var lH=smoothAngles['L. Hip'],rH=smoothAngles['R. Hip'];
+    if(lH!=null||rH!=null){ var ta=lH!=null?lH:rH; document.getElementById('kpi-takeoff').textContent=Math.round(ta)+'°'; document.getElementById('bar-takeoff').style.width=Math.min(100,(ta/180)*100)+'%'; }
+    if(lK!=null||rK!=null){ var best=Math.min(lK!=null?lK:180,rK!=null?rK:180); document.getElementById('kpi-knee').textContent=Math.round(best)+'°'; document.getElementById('bar-knee').style.width=Math.min(100,(1-best/180)*100)+'%'; }
+    if(lm[11]&&lm[12]&&lm[23]&&lm[24]){ var mSx=(lm[11].x+lm[12].x)/2,mSy=(lm[11].y+lm[12].y)/2,mHx=(lm[23].x+lm[24].x)/2,mHy=(lm[23].y+lm[24].y)/2; var lean=Math.round(Math.atan2(Math.abs(mSx-mHx),Math.abs(mSy-mHy))*180/Math.PI); document.getElementById('kpi-lean').textContent=lean+'°'; document.getElementById('bar-lean').style.width=Math.min(100,(lean/30)*100)+'%'; }
+    if(lE!=null&&rE!=null){ var d=Math.abs(Math.round(lE-rE)); document.getElementById('kpi-arm').textContent=d+'°'; document.getElementById('bar-arm').style.width=Math.min(100,(1-(d/90))*100)+'%'; }
+    if(lm[11]&&lm[12]&&lm[23]&&lm[24]){ var sW=Math.abs(lm[11].x-lm[12].x),hW=Math.abs(lm[23].x-lm[24].x); var off=Math.round(Math.abs(sW-hW)*100); document.getElementById('kpi-align').textContent=off+'%'; document.getElementById('bar-align').style.width=Math.min(100,Math.max(0,(1-(off/40))*100))+'%'; }
+  }
+
+  // Phase watermark
+  if(currentPhase){
+    context.save();
+    context.font="700 52px 'Bebas Neue',sans-serif";
+    context.fillStyle=phaseColors[currentPhase]+'18';
+    context.textAlign='center';
+    context.fillText(currentPhase.toUpperCase(),W/2,H-16);
+    context.restore();
+  }
+}
+
+// ══════════════════════════════════════════════
+//  FPS
+// ══════════════════════════════════════════════
+function tickFps(){
+  fpsFrames++;
+  var now=performance.now();
+  if(now-fpsTs>=1000){
+    document.getElementById('fps-display').textContent=Math.round(fpsFrames*1000/(now-fpsTs))+'fps';
+    fpsFrames=0; fpsTs=now;
+  }
+}
+
+// ══════════════════════════════════════════════
+//  CAMERA
+// ══════════════════════════════════════════════
+var vid=document.getElementById('vid');
+var poseInstance=null, camInstance=null;
+var ldot=document.getElementById('ldot');
+
+function setStatus(cls,msg){ ldot.className='live-dot '+cls; }
+
+async function startTracking(){
+  document.getElementById('overlay').style.display='none';
+  setStatus('','Loading…');
+  requestWakeLock();
+
+  try {
+    poseInstance = new window.Pose({
+      locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/'+f; }
+    });
+    poseInstance.setOptions({
+      modelComplexity:2, smoothLandmarks:true, enableSegmentation:false,
+      minDetectionConfidence:0.55, minTrackingConfidence:0.55
+    });
+    poseInstance.onResults(function(res){
+      var lm=res.poseLandmarks||null;
+      detectPhase(lm);
+      drawFrame(lm, cvs, ctx);
+      tickFps();
+      if(isRecording && lm){
+        recordingFrames.push({ landmarks:lm.map(function(p){return{x:p.x,y:p.y,z:p.z,visibility:p.visibility};}), phase:currentPhase, ts:Date.now() });
+        // Cap at ~30s of frames
+        if(recordingFrames.length > 900) recordingFrames.shift();
+      }
+    });
+    await poseInstance.initialize();
+    setStatus('on','');
+
+    camInstance = new window.Camera(vid, {
+      onFrame: function(){ return poseInstance.send({image:vid}); },
+      width:1280, height:720,
+      facingMode: facingMode
+    });
+    await camInstance.start();
+    running=true;
+  } catch(e){
+    console.error(e);
+    setStatus('err','');
+    toast('Camera error: '+e.message);
+    document.getElementById('overlay').style.display='';
+  }
+}
+
+async function restartCamera(){
+  if(camInstance){ try{ await camInstance.stop(); }catch(e){} }
+  camInstance = new window.Camera(vid, {
+    onFrame: function(){ return poseInstance.send({image:vid}); },
+    width:1280, height:720,
+    facingMode: facingMode
+  });
+  await camInstance.start();
+}
+
+document.getElementById('btn-start').addEventListener('click', startTracking);
+
+// ══════════════════════════════════════════════
+//  SESSIONS
+// ══════════════════════════════════════════════
+document.getElementById('btn-clear-all').addEventListener('click', function(){
+  if(confirm('Delete all sessions?')){ saveSessions([]); renderSessions(); toast('All sessions cleared'); }
+});
+
+function renderSessions(){
+  var sessions=loadSessions();
+  var body=document.getElementById('sessions-body');
+  var empty=document.getElementById('empty-state');
+  empty.style.display=sessions.length?'none':'flex';
+
+  // Remove old cards
+  body.querySelectorAll('.session-card').forEach(function(c){ c.remove(); });
+
+  sessions.forEach(function(session){
+    var card=document.createElement('div');
+    card.className='session-card';
+
+    var phaseBadges=session.phases.map(function(p){
+      return '<span class="phase-badge" style="background:'+phaseColors[p]+'22;color:'+phaseColors[p]+';border:1px solid '+phaseColors[p]+'44">'+p.toUpperCase()+'</span>';
+    }).join('');
+
+    card.innerHTML=
+      '<div class="session-head" id="sh-'+session.id+'">'+
+        '<div>'+
+          '<h3>Session — '+session.date+'</h3>'+
+          '<div class="session-meta">'+session.duration+'s &nbsp;'+phaseBadges+'</div>'+
+        '</div>'+
+        '<div class="session-actions">'+
+          '<button class="sm-btn replay-btn" data-id="'+session.id+'">Replay</button>'+
+          '<button class="sm-btn del del-btn" data-id="'+session.id+'">Delete</button>'+
+        '</div>'+
+      '</div>'+
+      '<div class="session-detail" id="sd-'+session.id+'">'+
+        '<div class="replay-canvas-wrap"><canvas id="rc-'+session.id+'" width="640" height="360"></canvas></div>'+
+        '<div class="replay-controls">'+
+          '<button class="replay-play" data-id="'+session.id+'">&#9654; Play</button>'+
+          '<input class="replay-scrub" type="range" min="0" max="'+(session.frames.length-1)+'" value="0" id="rs-'+session.id+'">'+
+          '<span id="rt-'+session.id+'" style="font-size:0.58rem;color:var(--muted);white-space:nowrap">0.0s</span>'+
+        '</div>'+
+        '<div class="notes-label">Coach Notes</div>'+
+        '<textarea class="notes-area" id="note-'+session.id+'" placeholder="Add coaching notes…">'+escHtml(session.notes||'')+'</textarea>'+
+        '<button class="save-note-btn" data-id="'+session.id+'">Save Note</button>'+
+      '</div>';
+
+    body.appendChild(card);
+
+    // Toggle detail
+    card.querySelector('#sh-'+session.id).addEventListener('click', function(e){
+      if(e.target.classList.contains('sm-btn')) return;
+      var det=document.getElementById('sd-'+session.id);
+      det.classList.toggle('open');
+      if(det.classList.contains('open')) renderReplayFrame(session, 0);
+    });
+
+    // Delete
+    card.querySelector('.del-btn').addEventListener('click', function(){
+      var ss=loadSessions().filter(function(s){ return s.id!==session.id; });
+      saveSessions(ss); renderSessions(); toast('Session deleted');
+    });
+
+    // Replay
+    var replayTimer=null, replayIdx=0, replayPlaying=false;
+    var scrub=document.getElementById('rs-'+session.id);
+    var timeEl=document.getElementById('rt-'+session.id);
+
+    card.querySelector('.replay-play').addEventListener('click', function(){
+      if(replayPlaying){
+        replayPlaying=false; clearInterval(replayTimer); this.textContent='▶ Play';
+      } else {
+        replayPlaying=true; this.textContent='⏸ Pause';
+        var btn=this;
+        replayTimer=setInterval(function(){
+          if(replayIdx>=session.frames.length-1){ replayIdx=0; }
+          replayIdx++;
+          scrub.value=replayIdx;
+          var f=session.frames[replayIdx];
+          var elapsed=((f.ts-session.frames[0].ts)/1000).toFixed(1);
+          timeEl.textContent=elapsed+'s';
+          renderReplayFrame(session, replayIdx);
+        }, 1000/30);
+      }
+    });
+
+    scrub.addEventListener('input', function(){
+      replayIdx=+this.value;
+      var f=session.frames[replayIdx];
+      var elapsed=((f.ts-session.frames[0].ts)/1000).toFixed(1);
+      timeEl.textContent=elapsed+'s';
+      renderReplayFrame(session, replayIdx);
+    });
+
+    // Save note
+    card.querySelector('.save-note-btn').addEventListener('click', function(){
+      var note=document.getElementById('note-'+session.id).value;
+      var ss=loadSessions();
+      ss.forEach(function(s){ if(s.id===session.id) s.notes=note; });
+      saveSessions(ss); toast('Note saved ✓');
+    });
+  });
+}
+
+function renderReplayFrame(session, idx){
+  var rc=document.getElementById('rc-'+session.id);
+  if(!rc) return;
+  var rctx=rc.getContext('2d');
+  var frame=session.frames[idx];
+  if(!frame) return;
+
+  // Temporarily override phase from recorded frame
+  var savedPhase=currentPhase; currentPhase=frame.phase;
+  var savedMirror=mirrored; mirrored=true;
+  var savedVideo=showVideo; showVideo=false;
+
+  drawFrame(frame.landmarks, rc, rctx, true);
+
+  currentPhase=savedPhase; mirrored=savedMirror; showVideo=savedVideo;
+}
+
+function escHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// Initial canvas
+ctx.fillStyle='#080b10'; ctx.fillRect(0,0,cvs.width,cvs.height);
+setStatus('','');
+
+}); // end load
+</script>
+</body>
+</html>
