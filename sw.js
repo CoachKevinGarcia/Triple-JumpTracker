@@ -1,15 +1,9 @@
-const CACHE = 'tj-tracker-v1';
-const ASSETS = [
-  './index.html',
-  './manifest.json'
-];
+const CACHE = 'athleteiq-video-v1';
+const ASSETS = ['./index.html', './analyse.html', './manifest.json'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
-  );
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
-
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys().then(keys =>
@@ -17,16 +11,11 @@ self.addEventListener('activate', e => {
     ).then(() => self.clients.claim())
   );
 });
-
 self.addEventListener('fetch', e => {
-  // Network first for MediaPipe CDN, cache first for local assets
-  if (e.request.url.includes('cdn.jsdelivr.net') || e.request.url.includes('fonts.googleapis.com')) {
-    e.respondWith(
-      fetch(e.request).catch(() => caches.match(e.request))
-    );
-  } else {
-    e.respondWith(
-      caches.match(e.request).then(r => r || fetch(e.request))
-    );
-  }
+  const ext = e.request.url.includes('cdn.jsdelivr') || e.request.url.includes('fonts.google');
+  e.respondWith(
+    ext
+      ? fetch(e.request).catch(() => caches.match(e.request))
+      : caches.match(e.request).then(r => r || fetch(e.request))
+  );
 });
