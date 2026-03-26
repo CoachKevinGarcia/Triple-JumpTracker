@@ -394,36 +394,61 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
 var ACCENTS={sprint:'#f0a500',block:'#e84040',long:'#00c87a',triple:'#3d9fe0'};
 var LABELS={sprint:'Sprint',block:'Block Start',long:'Long Jump',triple:'Triple Jump'};
 
-// ── Virtual joint definitions ──
-// These compute a midpoint from two real MediaPipe landmark indices
-// Used for Hip Centre and Shoulder Centre
+// ── Virtual joints ──
+// Midpoint computed from two MediaPipe landmarks
 var VIRTUAL_JOINTS={
-  'Hip Centre':     {idxA:23,idxB:24,color:'#ff9f43',pri:1},
-  'Shoulder Centre':{idxA:11,idxB:12,color:'#c084fc',pri:2},
+  'Hip Centre':      {idxA:23,idxB:24,color:'#ff9f43'},
+  'Shoulder Centre': {idxA:11,idxB:12,color:'#c084fc'},
+};
+
+// ── Canvas angle rules ──
+// Only these angles are drawn ON the video canvas.
+// Everything else is in the angles panel only.
+// Format: {jointName, color, secondary:true means smaller label}
+var CANVAS_ANGLES={
+  sprint: [
+    {name:'L. Knee',  color:'#f0a500', secondary:false},
+    {name:'R. Knee',  color:'#f0a500', secondary:false},
+    {name:'L. Hip Ext', color:'#ff9f43', secondary:true, virtual:'hip-ext'},
+    {name:'R. Hip Ext', color:'#ff9f43', secondary:true, virtual:'hip-ext'},
+  ],
+  block: [
+    {name:'Front Knee', color:'#e84040', secondary:false},
+    {name:'Rear Knee',  color:'#ff9f43', secondary:false},
+  ],
+  long: [
+    {name:'L. Knee',  color:'#00c87a', secondary:false},
+    {name:'R. Knee',  color:'#3d9fe0', secondary:false},
+    {name:'Body Angle', color:'#f0a500', secondary:true, virtual:'body-ang'},
+  ],
+  triple: [
+    {name:'L. Knee',  color:'#e84040', secondary:false},
+    {name:'R. Knee',  color:'#3d9fe0', secondary:false},
+  ],
 };
 
 var EVENT_PROFILES={
   sprint:{
-    // Key joints: knees (stride cycle), ankles (contact), elbows (arm drive)
-    // Hip centre via virtual. No individual L/R hips — redundant side-on.
+    // Panel joints — measured but only knees + hip extension shown on canvas
     joints:{
-      'L. Knee':    {idx:25,color:'#f0a500',angle:[23,25,27],pri:1,labelOnly:false},
-      'R. Knee':    {idx:26,color:'#f0a500',angle:[24,26,28],pri:1,labelOnly:false},
-      'L. Ankle':   {idx:27,color:'#ffd166',angle:[25,27,31],pri:1,labelOnly:false},
-      'R. Ankle':   {idx:28,color:'#ffd166',angle:[26,28,32],pri:1,labelOnly:false},
-      'L. Elbow':   {idx:13,color:'#e84040',angle:[11,13,15],pri:1,labelOnly:false},
-      'R. Elbow':   {idx:14,color:'#e84040',angle:[12,14,16],pri:1,labelOnly:false},
+      'L. Knee':    {idx:25, color:'#f0a500', angle:[23,25,27], canvas:true},
+      'R. Knee':    {idx:26, color:'#f0a500', angle:[24,26,28], canvas:true},
+      'L. Ankle':   {idx:27, color:'#ffd166', angle:[25,27,31], canvas:false},
+      'R. Ankle':   {idx:28, color:'#ffd166', angle:[26,28,32], canvas:false},
+      'L. Hip':     {idx:23, color:'#ff9f43', angle:[11,23,25], canvas:true},
+      'R. Hip':     {idx:24, color:'#ff9f43', angle:[12,24,26], canvas:true},
+      'L. Elbow':   {idx:13, color:'#e84040', angle:[11,13,15], canvas:false},
+      'R. Elbow':   {idx:14, color:'#e84040', angle:[12,14,16], canvas:false},
     },
-    virtualJoints:['Hip Centre','Shoulder Centre'],
-    // Default trails: knees + ankles + hip centre. Arms off by default — toggleable.
-    trailJoints:['L. Knee','R. Knee','L. Ankle','R. Ankle'],
-    trailVirtual:['Hip Centre'],
-    defaultTrailsOff:['L. Elbow','R. Elbow'],
+    // Trails: exactly knee, ankle, hip centre, shoulder centre
+    trailJoints:   ['L. Knee','R. Knee','L. Ankle','R. Ankle'],
+    trailVirtual:  ['Hip Centre','Shoulder Centre'],
+    virtualJoints: ['Hip Centre','Shoulder Centre'],
     phases:['drive','mid-sprint','max-v'],
     phaseColors:{drive:'#f0a500','mid-sprint':'#e84040','max-v':'#ffd166'},
     kpis:[
-      {id:'hip-ext',   label:'Hip Extension', sub:'Target >170° at toe-off',  color:'#f0a500'},
-      {id:'knee-drive',label:'Knee Drive',     sub:'Lead knee — min angle',    color:'#ffd166'},
+      {id:'hip-ext',   label:'Hip Extension', sub:'Target >170° at toe-off',  color:'#ff9f43'},
+      {id:'knee-drive',label:'Knee Drive',     sub:'Lead knee — min angle',    color:'#f0a500'},
       {id:'arm-sym',   label:'Arm Symmetry',   sub:'Δ elbow L vs R',           color:'#e84040'},
       {id:'trunk-lean',label:'Trunk Lean',     sub:'Drive:45° · Max-V:80°',    color:'#c084fc'},
     ],
@@ -431,72 +456,66 @@ var EVENT_PROFILES={
   },
 
   block:{
-    // Key joints: both knees define block angles, front ankle = push angle
-    // Hip centre shows position relative to shoulders
     joints:{
-      'Front Knee': {idx:25,color:'#e84040',angle:[23,25,27],pri:1},
-      'Rear Knee':  {idx:26,color:'#ff9f43',angle:[24,26,28],pri:1},
-      'Front Ankle':{idx:27,color:'#e84040',angle:[25,27,31],pri:1},
-      'L. Elbow':   {idx:13,color:'#3d9fe0',angle:[11,13,15],pri:2},
-      'R. Elbow':   {idx:14,color:'#3d9fe0',angle:[12,14,16],pri:2},
+      'Front Knee':  {idx:25, color:'#e84040', angle:[23,25,27], canvas:true},
+      'Rear Knee':   {idx:26, color:'#ff9f43', angle:[24,26,28], canvas:true},
+      'Front Ankle': {idx:27, color:'#ffd166', angle:[25,27,31], canvas:false},
+      'Front Hip':   {idx:23, color:'#ff9f43', angle:[11,23,25], canvas:false},
+      'Rear Hip':    {idx:24, color:'#ff9f43', angle:[12,24,26], canvas:false},
+      'L. Elbow':    {idx:13, color:'#3d9fe0', angle:[11,13,15], canvas:false},
+      'R. Elbow':    {idx:14, color:'#3d9fe0', angle:[12,14,16], canvas:false},
     },
-    virtualJoints:['Hip Centre','Shoulder Centre'],
-    trailJoints:['Front Knee','Rear Knee','Front Ankle'],
-    trailVirtual:['Hip Centre'],
-    defaultTrailsOff:['L. Elbow','R. Elbow'],
+    trailJoints:   ['Front Knee','Rear Knee','Front Ankle'],
+    trailVirtual:  ['Hip Centre','Shoulder Centre'],
+    virtualJoints: ['Hip Centre','Shoulder Centre'],
     phases:['set','drive','clear'],
     phaseColors:{set:'#e84040',drive:'#ff9f43',clear:'#ffd166'},
     kpis:[
-      {id:'front-block',label:'Front Block', sub:'Target 90–100°',               color:'#e84040'},
-      {id:'rear-block', label:'Rear Block',  sub:'Target 115–130°',              color:'#ff9f43'},
-      {id:'trunk-ang',  label:'Trunk Angle', sub:'Drive lean',                    color:'#c084fc'},
-      {id:'first-step', label:'First Step',  sub:'Shin — lower=more drive',       color:'#ffd166'},
+      {id:'front-block',label:'Front Block', sub:'Target 90–100°',              color:'#e84040'},
+      {id:'rear-block', label:'Rear Block',  sub:'Target 115–130°',             color:'#ff9f43'},
+      {id:'trunk-ang',  label:'Trunk Angle', sub:'Drive lean',                   color:'#c084fc'},
+      {id:'first-step', label:'First Step',  sub:'Shin — lower=more drive',      color:'#ffd166'},
     ],
     targets:{'Front Knee':95,'Rear Knee':122},
   },
 
   long:{
-    // Key joints: takeoff knee (extension), free knee (drive), ankles, toes (board)
-    // Hip centre arc = parabolic flight path — most important visual in long jump
     joints:{
-      'L. Knee':    {idx:25,color:'#00c87a',angle:[23,25,27],pri:1},
-      'R. Knee':    {idx:26,color:'#3d9fe0',angle:[24,26,28],pri:1},
-      'L. Ankle':   {idx:27,color:'#00c87a',angle:[25,27,31],pri:1},
-      'R. Ankle':   {idx:28,color:'#3d9fe0',angle:[26,28,32],pri:1},
-      'L. Toe':     {idx:31,color:'#00c87a',angle:[27,31,29],pri:2},
-      'R. Toe':     {idx:32,color:'#3d9fe0',angle:[28,32,30],pri:2},
+      'L. Knee':    {idx:25, color:'#00c87a', angle:[23,25,27], canvas:true},
+      'R. Knee':    {idx:26, color:'#3d9fe0', angle:[24,26,28], canvas:true},
+      'L. Ankle':   {idx:27, color:'#00c87a', angle:[25,27,31], canvas:false},
+      'R. Ankle':   {idx:28, color:'#3d9fe0', angle:[26,28,32], canvas:false},
+      'L. Hip':     {idx:23, color:'#00c87a', angle:[11,23,25], canvas:false},
+      'R. Hip':     {idx:24, color:'#3d9fe0', angle:[12,24,26], canvas:false},
+      'L. Elbow':   {idx:13, color:'#ffd166', angle:[11,13,15], canvas:false},
+      'R. Elbow':   {idx:14, color:'#ffd166', angle:[12,14,16], canvas:false},
     },
-    virtualJoints:['Hip Centre','Shoulder Centre'],
-    // Hip centre trail = the parabolic arc — always on
-    trailJoints:['L. Knee','R. Knee','L. Ankle','R. Ankle'],
-    trailVirtual:['Hip Centre'],
-    defaultTrailsOff:['L. Toe','R. Toe'],
+    trailJoints:   ['L. Knee','R. Knee','L. Ankle','R. Ankle'],
+    trailVirtual:  ['Hip Centre','Shoulder Centre'],
+    virtualJoints: ['Hip Centre','Shoulder Centre'],
     phases:['approach','penultimate','takeoff','flight','landing'],
     phaseColors:{approach:'#00c87a',penultimate:'#ffd166',takeoff:'#f0a500',flight:'#3d9fe0',landing:'#b060f0'},
     kpis:[
-      {id:'takeoff-ext',label:'Takeoff Ext.',  sub:'Target 165–175°',             color:'#00c87a'},
-      {id:'takeoff-ang',label:'Takeoff Angle', sub:'Body lean 65–75°',            color:'#f0a500'},
-      {id:'free-knee',  label:'Free Knee',     sub:'Min angle — tighter=higher',  color:'#3d9fe0'},
-      {id:'land-reach', label:'Landing Reach', sub:'Hip-knee-ankle at touch',     color:'#b060f0'},
+      {id:'takeoff-ext',label:'Takeoff Ext.',  sub:'Target 165–175°',            color:'#00c87a'},
+      {id:'takeoff-ang',label:'Takeoff Angle', sub:'Body lean 65–75°',           color:'#f0a500'},
+      {id:'free-knee',  label:'Free Knee',     sub:'Min angle — tighter=higher', color:'#3d9fe0'},
+      {id:'land-reach', label:'Landing Reach', sub:'Hip-knee-ankle at touch',    color:'#b060f0'},
     ],
     targets:{'L. Knee':170,'R. Knee':170},
   },
 
   triple:{
-    // Key joints: knees (phase drive), ankles + toes (takeoff/landing)
-    // Hip centre arc shows the three parabolic arcs of hop/step/jump
     joints:{
-      'L. Knee':    {idx:25,color:'#e84040',angle:[23,25,27],pri:1},
-      'R. Knee':    {idx:26,color:'#3d9fe0',angle:[24,26,28],pri:1},
-      'L. Ankle':   {idx:27,color:'#e84040',angle:[25,27,31],pri:1},
-      'R. Ankle':   {idx:28,color:'#3d9fe0',angle:[26,28,32],pri:1},
-      'L. Toe':     {idx:31,color:'#e84040',angle:[27,31,29],pri:2},
-      'R. Toe':     {idx:32,color:'#3d9fe0',angle:[28,32,30],pri:2},
+      'L. Knee':    {idx:25, color:'#e84040', angle:[23,25,27], canvas:true},
+      'R. Knee':    {idx:26, color:'#3d9fe0', angle:[24,26,28], canvas:true},
+      'L. Ankle':   {idx:27, color:'#e84040', angle:[25,27,31], canvas:false},
+      'R. Ankle':   {idx:28, color:'#3d9fe0', angle:[26,28,32], canvas:false},
+      'L. Hip':     {idx:23, color:'#ff9f43', angle:[11,23,25], canvas:false},
+      'R. Hip':     {idx:24, color:'#ff9f43', angle:[12,24,26], canvas:false},
     },
-    virtualJoints:['Hip Centre','Shoulder Centre'],
-    trailJoints:['L. Knee','R. Knee','L. Ankle','R. Ankle'],
-    trailVirtual:['Hip Centre'],
-    defaultTrailsOff:['L. Toe','R. Toe'],
+    trailJoints:   ['L. Knee','R. Knee','L. Ankle','R. Ankle'],
+    trailVirtual:  ['Hip Centre','Shoulder Centre'],
+    virtualJoints: ['Hip Centre','Shoulder Centre'],
     phases:['hop','step','jump'],
     phaseColors:{hop:'#e84040',step:'#3d9fe0',jump:'#00c87a'},
     kpis:[
@@ -566,12 +585,9 @@ window.addEventListener('load',function(){
     currentEvent=selectedEvent;
     profile=EVENT_PROFILES[currentEvent];
     filename=selectedFile.name;
-    // Init trail toggles — regular joints
+    // All trails on by default
     trailEnabled={};
     profile.trailJoints.forEach(function(n){trailEnabled[n]=true;});
-    // Default-off joints start disabled
-    if(profile.defaultTrailsOff){profile.defaultTrailsOff.forEach(function(n){trailEnabled[n]=false;});}
-    // Virtual joints (Hip Centre, Shoulder Centre)
     if(profile.trailVirtual){profile.trailVirtual.forEach(function(n){trailEnabled[n]=true;});}
     videoUrl=URL.createObjectURL(selectedFile);
     showScreen('s-processing');
@@ -838,30 +854,25 @@ function setKpi(id,val,pct,flag,ft){
 // ── Trail toggles ──
 function buildTrailToggles(){
   var g=document.getElementById('trail-grid');g.innerHTML='';
-  // Regular trail joints
-  var allTrailJoints=(profile.trailJoints||[]).concat(profile.defaultTrailsOff||[]);
-  allTrailJoints.forEach(function(n){
+  // Regular joints
+  profile.trailJoints.forEach(function(n){
     var cfg=profile.joints[n];if(!cfg)return;
-    var item=document.createElement('div');item.className='trail-item';
-    var tid='tt_'+safeId(n);
-    var isOn=trailEnabled[n]!==false;
-    item.innerHTML='<div class="trail-name"><div class="trail-sw" style="background:'+cfg.color+'"></div>'+n+'</div><button class="tog'+(isOn?' on':'')+'" id="'+tid+'"></button>';
-    g.appendChild(item);
-    item.querySelector('#'+tid).addEventListener('click',function(){
-      trailEnabled[n]=!trailEnabled[n];this.classList.toggle('on',trailEnabled[n]);renderFrame(currentFrameIdx);
-    });
+    addTrailToggle(g,n,cfg.color,true);
   });
-  // Virtual trail joints
+  // Virtual joints
   if(profile.trailVirtual){profile.trailVirtual.forEach(function(n){
     var vd=VIRTUAL_JOINTS[n];if(!vd)return;
-    var item=document.createElement('div');item.className='trail-item';
-    var tid='tt_'+safeId(n);
-    item.innerHTML='<div class="trail-name"><div class="trail-sw" style="background:'+vd.color+'"></div>'+n+'</div><button class="tog on" id="'+tid+'"></button>';
-    g.appendChild(item);
-    item.querySelector('#'+tid).addEventListener('click',function(){
-      trailEnabled[n]=!trailEnabled[n];this.classList.toggle('on',trailEnabled[n]);renderFrame(currentFrameIdx);
-    });
+    addTrailToggle(g,n,vd.color,true);
   });}
+}
+function addTrailToggle(g,n,color,on){
+  var item=document.createElement('div');item.className='trail-item';
+  var tid='tt_'+safeId(n);
+  item.innerHTML='<div class="trail-name"><div class="trail-sw" style="background:'+color+'"></div>'+n+'</div><button class="tog'+(on?' on':'')+'" id="'+tid+'"></button>';
+  g.appendChild(item);
+  item.querySelector('#'+tid).addEventListener('click',function(){
+    trailEnabled[n]=!trailEnabled[n];this.classList.toggle('on',trailEnabled[n]);renderFrame(currentFrameIdx);
+  });
 }
 
 // ── Drawer tabs ──
@@ -986,49 +997,67 @@ function drawOverlays(lm,W,H){
   });
 }
 function drawJoints(lm,W,H){
-  // Draw real joints (pri:1 only get labels to reduce clutter)
+  // ── Real joints: draw dot for all, angle label only if canvas:true ──
   Object.keys(profile.joints).forEach(function(n){
-    var cfg=profile.joints[n],p=lm[cfg.idx];if(!p||p.v<0.5)return;
+    var cfg=profile.joints[n];
+    var p=lm[cfg.idx];if(!p||p.v<0.5)return;
     var pos=lmXY(p,W,H);
-    var col=cfg.color;var phCol=phaseColorNow();if(phCol&&LEG_IDX.has(cfg.idx))col=phCol;
-    var ps=cfg.pri===1?ptSize:cfg.pri===2?ptSize*0.65:ptSize*0.45;
+    var col=cfg.color;
+    var phCol=phaseColorNow();if(phCol&&LEG_IDX.has(cfg.idx))col=phCol;
+
+    // Dot size — canvas joints slightly larger
+    var ps=cfg.canvas?ptSize:ptSize*0.6;
+
+    // Glow
     var gr=mainCtx.createRadialGradient(pos.x,pos.y,0,pos.x,pos.y,ps*3);
-    gr.addColorStop(0,col+'55');gr.addColorStop(1,col+'00');
-    mainCtx.beginPath();mainCtx.arc(pos.x,pos.y,ps*3,0,Math.PI*2);mainCtx.fillStyle=gr;mainCtx.fill();
-    mainCtx.beginPath();mainCtx.arc(pos.x,pos.y,ps,0,Math.PI*2);mainCtx.fillStyle=col;mainCtx.fill();
-    mainCtx.strokeStyle='rgba(255,255,255,0.4)';mainCtx.lineWidth=1;mainCtx.stroke();
-    // Only show angle labels on pri:1 joints
-    if(showLabels&&cfg.pri===1){
+    gr.addColorStop(0,col+'44');gr.addColorStop(1,col+'00');
+    mainCtx.beginPath();mainCtx.arc(pos.x,pos.y,ps*3,0,Math.PI*2);
+    mainCtx.fillStyle=gr;mainCtx.fill();
+
+    // Dot
+    mainCtx.beginPath();mainCtx.arc(pos.x,pos.y,ps,0,Math.PI*2);
+    mainCtx.fillStyle=col;mainCtx.fill();
+    mainCtx.strokeStyle='rgba(255,255,255,0.35)';mainCtx.lineWidth=1;mainCtx.stroke();
+
+    // Angle label — only on canvas:true joints
+    if(showLabels&&cfg.canvas){
       var ai=cfg.angle[0],bi=cfg.angle[1],ci=cfg.angle[2];
       if(lm[ai]&&lm[ci]&&lm[ai].v>0.4&&lm[ci].v>0.4){
         var ang=angleBetween(lm[ai],lm[bi],lm[ci]);
-        if(ang!=null){var fs=Math.max(10,Math.round(ps*1.5));mainCtx.save();mainCtx.font='600 '+fs+'px IBM Plex Mono,monospace';mainCtx.fillStyle=col;mainCtx.shadowColor='#000';mainCtx.shadowBlur=4;mainCtx.fillText(ang+'°',pos.x+ps+3,pos.y-ps+3);mainCtx.restore();}
+        if(ang!=null){
+          var fs=Math.max(11,Math.round(ps*1.6));
+          mainCtx.save();
+          mainCtx.font='700 '+fs+'px IBM Plex Mono,monospace';
+          mainCtx.fillStyle=col;
+          mainCtx.shadowColor='#000';mainCtx.shadowBlur=5;
+          mainCtx.fillText(ang+'°',pos.x+ps+4,pos.y-ps+4);
+          mainCtx.restore();
+        }
       }
     }
   });
-  // Draw virtual joints — single larger dot, no angle label (position only)
+
+  // ── Virtual joints: diamond dot, no angle label ──
   if(profile.virtualJoints){profile.virtualJoints.forEach(function(n){
     var vp=getVirtualLM(lm,n);if(!vp)return;
     var vd=VIRTUAL_JOINTS[n];
     var pos=lmXY(vp,W,H);
-    var ps=ptSize*1.1; // slightly larger than regular joints
     var col=vd.color;
-    // Diamond shape to distinguish from regular dots
+    var ps=ptSize*1.0;
+
+    // Glow
+    var gr=mainCtx.createRadialGradient(pos.x,pos.y,0,pos.x,pos.y,ps*3);
+    gr.addColorStop(0,col+'44');gr.addColorStop(1,col+'00');
+    mainCtx.beginPath();mainCtx.arc(pos.x,pos.y,ps*3,0,Math.PI*2);
+    mainCtx.fillStyle=gr;mainCtx.fill();
+
+    // Diamond
     mainCtx.save();
     mainCtx.translate(pos.x,pos.y);mainCtx.rotate(Math.PI/4);
-    var gr=mainCtx.createRadialGradient(0,0,0,0,0,ps*3);
-    gr.addColorStop(0,col+'66');gr.addColorStop(1,col+'00');
-    mainCtx.beginPath();mainCtx.arc(0,0,ps*3,0,Math.PI*2);mainCtx.fillStyle=gr;mainCtx.fill();
-    mainCtx.beginPath();mainCtx.rect(-ps*0.7,-ps*0.7,ps*1.4,ps*1.4);
+    mainCtx.beginPath();mainCtx.rect(-ps*0.72,-ps*0.72,ps*1.44,ps*1.44);
     mainCtx.fillStyle=col;mainCtx.fill();
-    mainCtx.strokeStyle='rgba(255,255,255,0.5)';mainCtx.lineWidth=1;mainCtx.stroke();
+    mainCtx.strokeStyle='rgba(255,255,255,0.45)';mainCtx.lineWidth=1;mainCtx.stroke();
     mainCtx.restore();
-    // Label
-    if(showLabels&&n==='Hip Centre'){
-      mainCtx.save();mainCtx.font='500 9px IBM Plex Mono,monospace';
-      mainCtx.fillStyle=col+'cc';mainCtx.shadowColor='#000';mainCtx.shadowBlur=3;
-      mainCtx.fillText('HC',pos.x+ps+3,pos.y+4);mainCtx.restore();
-    }
   });}
 }
 function drawTrails(idx,W,H){
@@ -1187,13 +1216,21 @@ function phaseColorAtFrame(idx){var ph=phaseAtFrame(idx);return ph&&profile.phas
 // ── Angles update ──
 function updateAngles(lm){
   Object.keys(profile.joints).forEach(function(n){
-    var cfg=profile.joints[n],p=lm[cfg.idx];if(!p||p.v<0.5){setAv(n,'—');return;}
+    var cfg=profile.joints[n];
+    var p=lm[cfg.idx];if(!p||p.v<0.5){setAv(n,'—');return;}
     var ai=cfg.angle[0],bi=cfg.angle[1],ci=cfg.angle[2];
     if(!lm[ai]||!lm[ci]||lm[ai].v<0.4||lm[ci].v<0.4){setAv(n,'—');return;}
-    var ang=angleBetween(lm[ai],lm[bi],lm[ci]);setAv(n,ang!=null?ang+'°':'—');
+    var ang=angleBetween(lm[ai],lm[bi],lm[ci]);
+    setAv(n,ang!=null?ang+'°':'—');
   });
 }
-function getAngle(lm,n){var cfg=profile.joints[n];if(!cfg)return null;var p=lm[cfg.idx];if(!p||p.v<0.5)return null;var ai=cfg.angle[0],bi=cfg.angle[1],ci=cfg.angle[2];if(!lm[ai]||!lm[ci]||lm[ai].v<0.4||lm[ci].v<0.4)return null;return angleBetween(lm[ai],lm[bi],lm[ci]);}
+function getAngle(lm,n){
+  var cfg=profile.joints[n];if(!cfg)return null;
+  var p=lm[cfg.idx];if(!p||p.v<0.5)return null;
+  var ai=cfg.angle[0],bi=cfg.angle[1],ci=cfg.angle[2];
+  if(!lm[ai]||!lm[ci]||lm[ai].v<0.4||lm[ci].v<0.4)return null;
+  return angleBetween(lm[ai],lm[bi],lm[ci]);
+}
 function flag(diff,range,invert){var ok=invert?diff<=range/3:diff<=range/2,close=diff<=range;if(ok)return['Good','good'];if(close)return['OK','warn'];return['Check','bad'];}
 
 function updateKpis(lm){
