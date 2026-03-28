@@ -338,7 +338,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
     <div class="drawer-body" id="tab-angles"><div class="angles-grid" id="angles-grid"></div></div>
     <div class="drawer-body" id="tab-metrics" style="display:none"><div class="kpi-scroll" id="kpi-scroll"></div></div>
     <div class="drawer-body" id="tab-phases" style="display:none">
-      <div class="phases-help">Tap "Mark Phase" to stamp the current frame as the start of a phase.</div>
+      <div class="phases-help">Scrub to each phase start, then tap Mark Phase. Tap once for Hop, once for Step, once for Jump. For triple jump, also select your athlete's pattern (RRL or LLR).</div>
       <button class="mark-phase-btn" id="btn-mark-phase">+ Mark Phase at Current Frame</button>
       <div class="phase-list" id="phase-list"></div>
     </div>
@@ -803,6 +803,8 @@ function setupAnalysisScreen(){
   document.getElementById('total-display').textContent=dur.toFixed(2)+'s';
   buildAnglesGrid();buildKpis();buildTrailToggles();
   phaseMarkers=[];sessionNotes='';
+  tripleJumpPattern='RRL';
+  buildPhaseControls();
   buildPhaseList();
   renderFrame(0);
 }
@@ -1062,99 +1064,28 @@ function drawJoints(lm,W,H){
 }
 function drawTrails(idx,W,H){
   if(!showTrails)return;
-  var start=Math.max(0,idx-trailLength);
+  // ★ FIX 1: Trails persist — always draw from frame 0 to current frame
+  var start=0;
 
   // ── Config ──
-  var VIS_THRESHOLD    = 0.55;  // 1: min visibility to include a point
-  var MAX_JUMP_FRAC    = 0.18;  // 2: max allowed movement per frame as fraction of frame diagonal
-  var SMOOTH_WINDOW    = 3;     // 3: frames each side to average position over
-  var MIN_CONSEC       = 3;     // 5: min consecutive visible frames before trail starts
-  var maxJump          = Math.hypot(W,H) * MAX_JUMP_FRAC;
+  var VIS_THRESHOLD = currentEvent==='triple' ? 0.45 : 0.55; // ★ FIX 3: lower threshold for triple
+  var MAX_JUMP_FRAC = 0.18;
+  var SMOOTH_WINDOW = 3;
+  var MIN_CONSEC    = 2; // ★ FIX 3: reduced from 3 so first hop frames aren't stripped
+  var maxJump       = Math.hypot(W,H) * MAX_JUMP_FRAC;
 
   profile.trailJoints.forEach(function(n){
     if(!trailEnabled[n])return;
     var cfg=profile.joints[n];if(!cfg)return;
     var jIdx=cfg.idx;
 
-    // ── Pass 1: collect raw valid points ──
     var raw=[];
     for(var i=start;i<=idx;i++){
       var fd=frameData[i];
-      if(!fd||!fd.landmarks)continue;
+      if(!fd||!fd.landmarks){raw.push(null);continue;}
       var p=fd.landmarks[jIdx];
-      if(!p||p.v<VIS_THRESHOLD){raw.push(null);continue;}  // null = invisible/low-conf
+      if(!p||p.v<VIS_THRESHOLD){raw.push(null);continue;}
       raw.push({x:p.x,y:p.y,frame:i});
-    }
-
-    // ── Fix 5: strip points that don't have MIN_CONSEC consecutive visible neighbours ──
-    var consec=raw.map(function(){return 0;});
-    var run=0;
-    for(var i=0;i<raw.length;i++){if(raw[i])run++;else run=0;consec[i]=run;}
-    // Also check forward
-    run=0;
-    for(var i=raw.length-1;i>=0;i--){if(raw[i])run++;else run=0;if(consec[i]>0)consec[i]=Math.min(consec[i],run);}
-    for(var i=0;i<raw.length;i++){if(raw[i]&&consec[i]<MIN_CONSEC)raw[i]=null;}
-
-    // ── Fix 3: smooth positions over SMOOTH_WINDOW ──
-    var smoothed=raw.map(function(pt,i){
-      if(!pt)return null;
-      var sx=0,sy=0,cnt=0;
-      for(var k=Math.max(0,i-SMOOTH_WINDOW);k<=Math.min(raw.length-1,i+SMOOTH_WINDOW);k++){
-        if(raw[k]){sx+=raw[k].x;sy+=raw[k].y;cnt++;}
-      }
-      return cnt>0?{x:sx/cnt,y:sy/cnt,frame:pt.frame}:null;
-    });
-
-    // ── Fix 2: remove jump outliers ──
-    // Compare each point to its nearest previous valid point; if it jumped too far, null it
-    var lastValid=null;
-    for(var i=0;i<smoothed.length;i++){
-      if(!smoothed[i]){lastValid=null;continue;}
-      if(lastValid){
-        var dx=(smoothed[i].x-lastValid.x)*W;
-        var dy=(smoothed[i].y-lastValid.y)*H;
-        var dist=Math.hypot(dx,dy);
-        if(dist>maxJump){smoothed[i]=null;continue;}
-      }
-      lastValid=smoothed[i];
-    }
-
-    // ── Build final canvas-space points ──
-    var pts=[];
-    for(var i=0;i<smoothed.length;i++){
-      if(!smoothed[i]){pts.push(null);continue;}
-      var fi=smoothed[i].frame;
-      pts.push({pos:lmXY(smoothed[i],W,H),col:phaseColorAtFrame(fi)||cfg.color});
-    }
-
-    // ── Draw segments, breaking on nulls ──
-    for(var j=1;j<pts.length;j++){
-      if(!pts[j]||!pts[j-1])continue;  // gap — don't draw across invisible frames
-      var t=j/pts.length;
-      var alpha=Math.round(t*0.85*255).toString(16).padStart(2,'0');
-      mainCtx.strokeStyle=pts[j].col+alpha;
-      mainCtx.lineWidth=t*3+0.4;
-      mainCtx.lineCap='round';
-      mainCtx.beginPath();
-      mainCtx.moveTo(pts[j-1].pos.x,pts[j-1].pos.y);
-      mainCtx.lineTo(pts[j].pos.x,pts[j].pos.y);
-      mainCtx.stroke();
-    }
-  });
-
-  // ── Virtual joint trails (Hip Centre, Shoulder Centre) ──
-  if(!profile.trailVirtual)return;
-  profile.trailVirtual.forEach(function(n){
-    if(!trailEnabled[n])return;
-    var vd=VIRTUAL_JOINTS[n];if(!vd)return;
-
-    // Collect raw virtual positions
-    var raw=[];
-    for(var i=start;i<=idx;i++){
-      var fd=frameData[i];if(!fd||!fd.landmarks){raw.push(null);continue;}
-      var vp=getVirtualLM(fd.landmarks,n);
-      if(!vp||vp.v<VIS_THRESHOLD){raw.push(null);continue;}
-      raw.push({x:vp.x,y:vp.y,frame:i});
     }
 
     // Consecutive filter
@@ -1179,23 +1110,78 @@ function drawTrails(idx,W,H){
     var lastValid=null;
     for(var i=0;i<smoothed.length;i++){
       if(!smoothed[i]){lastValid=null;continue;}
+      if(lastValid){
+        var dx=(smoothed[i].x-lastValid.x)*W;
+        var dy=(smoothed[i].y-lastValid.y)*H;
+        if(Math.hypot(dx,dy)>maxJump){smoothed[i]=null;continue;}
+      }
+      lastValid=smoothed[i];
+    }
+
+    // Canvas points
+    var pts=[];
+    for(var i=0;i<smoothed.length;i++){
+      if(!smoothed[i]){pts.push(null);continue;}
+      pts.push({pos:lmXY(smoothed[i],W,H),col:phaseColorAtFrame(smoothed[i].frame)||cfg.color});
+    }
+
+    // Draw
+    for(var j=1;j<pts.length;j++){
+      if(!pts[j]||!pts[j-1])continue;
+      var t=j/pts.length;
+      mainCtx.strokeStyle=pts[j].col+Math.round(t*0.85*255).toString(16).padStart(2,'0');
+      mainCtx.lineWidth=t*3+0.4;mainCtx.lineCap='round';
+      mainCtx.beginPath();mainCtx.moveTo(pts[j-1].pos.x,pts[j-1].pos.y);mainCtx.lineTo(pts[j].pos.x,pts[j].pos.y);mainCtx.stroke();
+    }
+  });
+
+  // Virtual joint trails
+  if(!profile.trailVirtual)return;
+  var VIS_THRESHOLD_V = currentEvent==='triple' ? 0.45 : 0.55;
+  profile.trailVirtual.forEach(function(n){
+    if(!trailEnabled[n])return;
+    var vd=VIRTUAL_JOINTS[n];if(!vd)return;
+
+    var raw=[];
+    for(var i=start;i<=idx;i++){
+      var fd=frameData[i];if(!fd||!fd.landmarks){raw.push(null);continue;}
+      var vp=getVirtualLM(fd.landmarks,n);
+      if(!vp||vp.v<VIS_THRESHOLD_V){raw.push(null);continue;}
+      raw.push({x:vp.x,y:vp.y,frame:i});
+    }
+
+    var consec=raw.map(function(){return 0;});
+    var run=0;
+    for(var i=0;i<raw.length;i++){if(raw[i])run++;else run=0;consec[i]=run;}
+    run=0;
+    for(var i=raw.length-1;i>=0;i--){if(raw[i])run++;else run=0;if(consec[i]>0)consec[i]=Math.min(consec[i],run);}
+    for(var i=0;i<raw.length;i++){if(raw[i]&&consec[i]<MIN_CONSEC)raw[i]=null;}
+
+    var smoothed=raw.map(function(pt,i){
+      if(!pt)return null;
+      var sx=0,sy=0,cnt=0;
+      for(var k=Math.max(0,i-SMOOTH_WINDOW);k<=Math.min(raw.length-1,i+SMOOTH_WINDOW);k++){
+        if(raw[k]){sx+=raw[k].x;sy+=raw[k].y;cnt++;}
+      }
+      return cnt>0?{x:sx/cnt,y:sy/cnt,frame:pt.frame}:null;
+    });
+
+    var lastValid=null;
+    for(var i=0;i<smoothed.length;i++){
+      if(!smoothed[i]){lastValid=null;continue;}
       if(lastValid){var dx=(smoothed[i].x-lastValid.x)*W,dy=(smoothed[i].y-lastValid.y)*H;if(Math.hypot(dx,dy)>maxJump){smoothed[i]=null;continue;}}
       lastValid=smoothed[i];
     }
 
-    // Draw — hip centre gets a slightly thicker trail to stand out
     var prevPt=null;
     for(var i=0;i<smoothed.length;i++){
       if(!smoothed[i]){prevPt=null;continue;}
       var pos=lmXY(smoothed[i],W,H);
-      var fi=smoothed[i].frame;
-      var col=phaseColorAtFrame(fi)||vd.color;
+      var col=phaseColorAtFrame(smoothed[i].frame)||vd.color;
       if(prevPt){
         var t=(i+1)/smoothed.length;
-        var alpha=Math.round(t*0.9*255).toString(16).padStart(2,'0');
-        mainCtx.strokeStyle=col+alpha;
-        mainCtx.lineWidth=t*4+0.5; // slightly thicker than regular trails
-        mainCtx.lineCap='round';
+        mainCtx.strokeStyle=col+Math.round(t*0.9*255).toString(16).padStart(2,'0');
+        mainCtx.lineWidth=t*4+0.5;mainCtx.lineCap='round';
         mainCtx.beginPath();mainCtx.moveTo(prevPt.x,prevPt.y);mainCtx.lineTo(pos.x,pos.y);mainCtx.stroke();
       }
       prevPt=pos;
@@ -1373,10 +1359,63 @@ document.getElementById('main-canvas').addEventListener('click',function(){if(pl
 document.getElementById('btn-trail').addEventListener('click',function(){showTrails=!showTrails;this.classList.toggle('active',showTrails);renderFrame(currentFrameIdx);});
 document.getElementById('btn-overlay').addEventListener('click',function(){showOverlays=!showOverlays;this.classList.toggle('active',showOverlays);renderFrame(currentFrameIdx);});
 document.getElementById('btn-export').addEventListener('click',function(){
-  stopPlay();setTimeout(function(){
-    var link=document.createElement('a');link.download='athleteiq_'+currentEvent+'_frame'+currentFrameIdx+'.png';link.href=mainCanvas.toDataURL('image/png');link.click();toast('Screenshot saved');
-  },200);
+  stopPlay();
+  // Show choice: current frame or full trail snapshot
+  var choice=confirm('Export full trail snapshot?\n\nOK = Full trail map (all frames)\nCancel = Current frame only');
+  if(choice){
+    exportTrailSnapshot();
+  } else {
+    setTimeout(function(){
+      var link=document.createElement('a');
+      link.download='athleteiq_'+currentEvent+'_frame'+currentFrameIdx+'.png';
+      link.href=mainCanvas.toDataURL('image/png');link.click();
+      toast('Screenshot saved');
+    },200);
+  }
 });
+
+// ★ FIX 2: Export full trail snapshot — draws all trails across all frames
+function exportTrailSnapshot(){
+  toast('Generating trail map…');
+  var W=mainCanvas.width, H=mainCanvas.height;
+  // Create an offscreen canvas
+  var snap=document.createElement('canvas');
+  snap.width=W; snap.height=H;
+  var sCtx=snap.getContext('2d');
+
+  // Dark background
+  sCtx.fillStyle='#0a0f16';sCtx.fillRect(0,0,W,H);
+
+  // Draw the video frame at the last processed frame
+  var lastFd=frameData[totalFrames-1];
+  if(lastFd){
+    try{
+      var sc=Math.min(W/vidW,H/vidH),dw=vidW*sc,dh=vidH*sc,dx=(W-dw)/2,dy=(H-dh)/2;
+      sCtx.drawImage(procVideo,dx,dy,dw,dh);
+    }catch(e){}
+    sCtx.fillStyle='rgba(10,15,22,0.55)';sCtx.fillRect(0,0,W,H);
+  }
+
+  // Temporarily swap mainCtx for sCtx and draw ALL trails (full range)
+  var savedCtx=mainCtx;
+  mainCtx=sCtx;
+  drawTrails(totalFrames-1,W,H);
+  mainCtx=savedCtx;
+
+  // Title watermark
+  sCtx.save();
+  sCtx.font='700 14px IBM Plex Mono,monospace';
+  sCtx.fillStyle='rgba(255,255,255,0.5)';
+  sCtx.fillText('AthleteIQ · '+LABELS[currentEvent]+' · Full Trail Map',12,H-10);
+  sCtx.restore();
+
+  var link=document.createElement('a');
+  link.download='athleteiq_'+currentEvent+'_trailmap.png';
+  link.href=snap.toDataURL('image/png');
+  link.click();
+  toast('Trail map saved');
+}
+
 document.getElementById('btn-home').addEventListener('click',function(){stopPlay();showScreen('s-home');renderRecent();});
 document.getElementById('btn-note').addEventListener('click',function(){document.getElementById('notes-area').value=sessionNotes;document.getElementById('notes-modal').classList.add('open');});
 document.getElementById('notes-cancel').addEventListener('click',function(){document.getElementById('notes-modal').classList.remove('open');});
@@ -1398,23 +1437,86 @@ document.getElementById('btn-save').addEventListener('click',function(){
 // ════════════════════════════════════════════════
 //  PHASES
 // ════════════════════════════════════════════════
+var tripleJumpPattern = 'RRL'; // default — changed by selector
+
+// ★ FIX 4: RRL/LLR selector — shown only for triple jump
+function buildPhaseControls(){
+  var helpEl=document.querySelector('.phases-help');
+  // Remove old pattern selector if present
+  var old=document.getElementById('triple-pattern-wrap');
+  if(old)old.remove();
+
+  if(currentEvent==='triple'){
+    var wrap=document.createElement('div');
+    wrap.id='triple-pattern-wrap';
+    wrap.style.cssText='display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+    wrap.innerHTML=
+      '<span style="font-size:0.56rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);">Pattern:</span>'+
+      '<button id="pat-rrl" style="font-family:var(--fd);font-size:0.8rem;font-weight:700;letter-spacing:0.1em;padding:5px 12px;border-radius:4px;border:1px solid var(--border);background:var(--accent);color:#000;cursor:pointer;">RRL</button>'+
+      '<button id="pat-llr" style="font-family:var(--fd);font-size:0.8rem;font-weight:700;letter-spacing:0.1em;padding:5px 12px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;">LLR</button>';
+    helpEl.insertAdjacentElement('afterend',wrap);
+
+    function updatePatternBtns(){
+      document.getElementById('pat-rrl').style.background=tripleJumpPattern==='RRL'?'var(--accent)':'transparent';
+      document.getElementById('pat-rrl').style.color=tripleJumpPattern==='RRL'?'#000':'var(--muted)';
+      document.getElementById('pat-llr').style.background=tripleJumpPattern==='LLR'?'var(--accent)':'transparent';
+      document.getElementById('pat-llr').style.color=tripleJumpPattern==='LLR'?'#000':'var(--muted)';
+    }
+    document.getElementById('pat-rrl').addEventListener('click',function(){tripleJumpPattern='RRL';updatePatternBtns();buildPhaseList();toast('Pattern: RRL');});
+    document.getElementById('pat-llr').addEventListener('click',function(){tripleJumpPattern='LLR';updatePatternBtns();buildPhaseList();toast('Pattern: LLR');});
+  }
+}
+
+// ★ FIX 4: Mark phase — cycles through ALL phases including jump
+// Each tap marks the next phase in sequence, allowing repeats for re-marking
 document.getElementById('btn-mark-phase').addEventListener('click',function(){
-  var phases=profile.phases;
-  var marked=phaseMarkers.map(function(m){return m.phase;});
-  var next=phases.find(function(p){return!marked.includes(p);})||phases[0];
-  phaseMarkers.push({phase:next,frame:currentFrameIdx,color:profile.phaseColors[next]||ACCENTS[currentEvent]});
+  var phases=profile.phases; // e.g. ['hop','step','jump']
+  // Find which phase to mark next — count current markers per phase
+  var counts={};
+  phases.forEach(function(p){counts[p]=0;});
+  phaseMarkers.forEach(function(m){if(counts[m.phase]!==undefined)counts[m.phase]++;});
+  // Pick the first phase that hasn't been marked yet
+  var next=phases.find(function(p){return counts[p]===0;});
+  // If all phases marked, cycle back to hop/first for re-marking
+  if(!next) next=phases[0];
+  var col=profile.phaseColors[next]||ACCENTS[currentEvent];
+  phaseMarkers.push({phase:next,frame:currentFrameIdx,color:col});
   phaseMarkers.sort(function(a,b){return a.frame-b.frame;});
   buildPhaseList();renderScrubMarkers();
   toast('Marked: '+next.toUpperCase()+' at frame '+currentFrameIdx);
 });
+
 function buildPhaseList(){
   var list=document.getElementById('phase-list');list.innerHTML='';
-  if(!phaseMarkers.length){list.innerHTML='<div style="font-size:0.56rem;color:var(--muted);">No phases marked yet.</div>';return;}
+
+  // Pattern label for triple jump
+  if(currentEvent==='triple'&&phaseMarkers.length){
+    var patDiv=document.createElement('div');
+    patDiv.style.cssText='font-size:0.56rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;padding:6px 10px;background:var(--s2);border-radius:4px;border:1px solid var(--border);';
+    patDiv.textContent='Pattern: '+tripleJumpPattern+' · Hop → Step → Jump';
+    list.appendChild(patDiv);
+  }
+
+  if(!phaseMarkers.length){
+    var empty=document.createElement('div');
+    empty.style.cssText='font-size:0.56rem;color:var(--muted);';
+    empty.textContent='No phases marked yet. Tap the button above to mark each phase at the correct frame.';
+    list.appendChild(empty);
+    return;
+  }
+
   phaseMarkers.forEach(function(m,i){
     var col=profile.phaseColors[m.phase]||ACCENTS[currentEvent];
     var ts=frameData[m.frame]?frameData[m.frame].ts:0;
     var item=document.createElement('div');item.className='phase-item';
-    item.innerHTML='<div class="phase-swatch" style="background:'+col+'"></div><div class="phase-info"><div class="phase-name" style="color:'+col+'">'+m.phase.toUpperCase()+'</div><div class="phase-frame">Frame '+m.frame+' · '+ts.toFixed(2)+'s</div></div><button class="phase-goto" data-i="'+i+'">Go</button><button class="phase-goto" data-del="'+i+'" style="color:var(--danger)">✕</button>';
+    item.innerHTML=
+      '<div class="phase-swatch" style="background:'+col+'"></div>'+
+      '<div class="phase-info">'+
+        '<div class="phase-name" style="color:'+col+'">'+m.phase.toUpperCase()+'</div>'+
+        '<div class="phase-frame">Frame '+m.frame+' · '+ts.toFixed(2)+'s</div>'+
+      '</div>'+
+      '<button class="phase-goto" data-i="'+i+'">Go</button>'+
+      '<button class="phase-goto" data-del="'+i+'" style="color:var(--danger)">✕</button>';
     list.appendChild(item);
   });
   list.querySelectorAll('[data-i]').forEach(function(btn){btn.addEventListener('click',function(){renderFrame(phaseMarkers[+this.dataset.i].frame);});});
